@@ -13,6 +13,7 @@ import path from "path";
 
 dotenv.config();
 const app = express();
+const PORT = process.env.PORT || 5000;
 
 app.use(cors({
   origin: process.env.CLEINT_URI, // frontend port
@@ -41,6 +42,6 @@ app.get("/", (req, res) => {
 });
 
 // Listen
-app.listen(process.env.PORT || 5000, () => {
-    console.log("Server running on port " + process.env.PORT);
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });
