@@ -15,7 +15,7 @@ dotenv.config();
 const app = express();
 
 app.use(cors({
-  origin: "http://localhost:5173", // frontend port
+  origin: process.env.CLEINT_URI, // frontend port
   credentials: true
 }));
 app.use(express.json());
@@ -37,7 +37,7 @@ mongoose.connect(process.env.MONGO_URI)
 
 // Default route
 app.get("/", (req, res) => {
-    res.send("Backend is running... hhh");
+    res.send("Backend is running...");
 });
 
 // Listen
