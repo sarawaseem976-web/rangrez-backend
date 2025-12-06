@@ -1,42 +1,40 @@
 import express from "express";
 import multer from "multer";
-import path from "path";
-import { fileURLToPath } from "url";
-import fs from "fs";
 import Event from "../models/Event.js";
 import { authAdmin } from "../middleware/adminMiddleware.js";
+import { v2 as cloudinary } from "cloudinary";
+import streamifier from "streamifier";
 
 const router = express.Router();
 
-// Handle __dirname in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Ensure upload directories exist
-const uploadsDir = path.join(__dirname, "../uploads");
-const sponsorDir = path.join(uploadsDir, "sponsors");
-
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-if (!fs.existsSync(sponsorDir)) fs.mkdirSync(sponsorDir);
-
-// Multer setup
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    if (file.fieldname === "imageUrl") {
-      cb(null, uploadsDir);
-    } else if (file.fieldname === "sponsorLogos") {
-      cb(null, sponsorDir);
-    } else {
-      cb(new Error("Unexpected field"));
-    }
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
+// -----------------------------
+// CLOUDINARY CONFIG
+// -----------------------------
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+// -----------------------------
+// Multer setup (memory storage for Cloudinary)
+// -----------------------------
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
+
+// Helper function to upload buffer to Cloudinary
+const uploadToCloudinary = (buffer, folder) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result.secure_url);
+      }
+    );
+    streamifier.createReadStream(buffer).pipe(stream);
+  });
+};
 
 // -----------------------------
 // Create Event
@@ -63,6 +61,20 @@ router.post(
         refreshments,
       } = req.body;
 
+      let imageUrl = "";
+      let sponsorLogos = [];
+
+      if (req.files.imageUrl) {
+        imageUrl = await uploadToCloudinary(req.files.imageUrl[0].buffer, "events");
+      }
+
+      if (req.files.sponsorLogos) {
+        for (let file of req.files.sponsorLogos) {
+          const url = await uploadToCloudinary(file.buffer, "events/sponsors");
+          sponsorLogos.push(url);
+        }
+      }
+
       const newEvent = new Event({
         title,
         description,
@@ -74,12 +86,8 @@ router.post(
         vipPrice,
         eventTime,
         refreshments,
-        imageUrl: req.files.imageUrl
-          ? `/uploads/${req.files.imageUrl[0].filename}`
-          : "",
-        sponsorLogos: req.files.sponsorLogos
-          ? req.files.sponsorLogos.map((file) => `/uploads/sponsors/${file.filename}`)
-          : [],
+        imageUrl,
+        sponsorLogos,
       });
 
       const savedEvent = await newEvent.save();
@@ -167,13 +175,16 @@ router.put(
       event.refreshments = refreshments || event.refreshments;
 
       if (req.files.imageUrl) {
-        event.imageUrl = `/uploads/${req.files.imageUrl[0].filename}`;
+        event.imageUrl = await uploadToCloudinary(req.files.imageUrl[0].buffer, "events");
       }
 
       if (req.files.sponsorLogos) {
-        event.sponsorLogos = req.files.sponsorLogos.map(
-          (file) => `/uploads/sponsors/${file.filename}`
-        );
+        let sponsorLogos = [];
+        for (let file of req.files.sponsorLogos) {
+          const url = await uploadToCloudinary(file.buffer, "events/sponsors");
+          sponsorLogos.push(url);
+        }
+        event.sponsorLogos = sponsorLogos;
       }
 
       const updatedEvent = await event.save();
