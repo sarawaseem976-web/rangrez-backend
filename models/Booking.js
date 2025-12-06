@@ -2,9 +2,7 @@ import mongoose from "mongoose";
 
 const bookingSchema = new mongoose.Schema(
   {
-    eventId: {
-       type: String,
-    },
+    eventId: { type: mongoose.Schema.Types.ObjectId, ref: "Event" },
 
     firstName: { type: String, required: true },
     lastName: { type: String, required: true },
