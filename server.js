@@ -1,5 +1,8 @@
 import express from "express";
 import dotenv from "dotenv";
+dotenv.config();
+
+
 import cors from "cors";
 import mongoose from "mongoose";
 import eventRoutes from "./routes/eventRoutes.js";
@@ -11,12 +14,12 @@ import path from "path";
 
 
 
-dotenv.config();
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
-  origin: process.env.CLEINT_URI, // frontend port
+  origin: process.env.CLIENT_URI, // frontend port
   credentials: true
 }));
 app.use(express.json());

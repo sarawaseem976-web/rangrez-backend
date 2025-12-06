@@ -1,44 +1,55 @@
+import dotenv from "dotenv";
+dotenv.config();  // Required here also
+
 import express from "express";
 import multer from "multer";
-import path from "path";
-import fs from "fs";
-import { fileURLToPath } from "url";
 import Booking from "../models/Booking.js";
 import nodemailer from "nodemailer";
 import QRCode from "qrcode";
+import { v2 as cloudinary } from "cloudinary";
+import { Readable } from "stream";
 
 const router = express.Router();
 
-// Fix dirname for ES Modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Ensure uploads folder exists
-const receiptsPath = path.join(__dirname, "../uploads/receipts");
-if (!fs.existsSync(receiptsPath)) {
-  fs.mkdirSync(receiptsPath, { recursive: true });
-  console.log("📂 receipts folder created");
-}
-
-// Multer storage setup
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, receiptsPath);
-  },
-  filename: function (req, file, cb) {
-    const uniqueName =
-      Date.now() +
-      "-" +
-      Math.round(Math.random() * 1e9) +
-      path.extname(file.originalname);
-    cb(null, uniqueName);
-  },
+/* ----------------------------------------------------
+   CLOUDINARY CONFIG
+---------------------------------------------------- */
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+console.log("Cloud Name:", process.env.CLOUDINARY_CLOUD_NAME);
+console.log("API Key:", process.env.CLOUDINARY_API_KEY);
+console.log("API Secret:", process.env.CLOUDINARY_API_SECRET ? "Loaded" : "Missing");
+
+
+/* ----------------------------------------------------
+   MULTER MEMORY STORAGE (REQUIRED FOR VERCEL)
+---------------------------------------------------- */
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 /* ----------------------------------------------------
-    CREATE BOOKING
+   HELPER: UPLOAD BUFFER TO CLOUDINARY
+---------------------------------------------------- */
+const uploadBufferToCloudinary = (buffer, folder) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder },
+      (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      }
+    );
+
+    Readable.from(buffer).pipe(stream);
+  });
+};
+
+/* ----------------------------------------------------
+   CREATE BOOKING
 ---------------------------------------------------- */
 router.post("/booking/create", upload.single("receiptImage"), async (req, res) => {
   try {
@@ -53,16 +64,29 @@ router.post("/booking/create", upload.single("receiptImage"), async (req, res) =
     } = req.body;
 
     if (!req.file) {
-      return res.status(400).json({ message: "Receipt upload is required" });
+      return res.status(400).json({ message: "Receipt image is required" });
     }
 
     if (!eventId) {
       return res.status(400).json({ message: "eventId is required" });
     }
 
-    // Generate random ticket number
+    /* -----------------------------------------
+       Upload Receipt to Cloudinary
+    ----------------------------------------- */
+    const uploadResult = await uploadBufferToCloudinary(
+      req.file.buffer,
+      "receipts"
+    );
+
+    /* -----------------------------------------
+       Generate Ticket Number
+    ----------------------------------------- */
     const ticketNumber = Math.floor(100000 + Math.random() * 900000);
 
+    /* -----------------------------------------
+       Save Booking
+    ----------------------------------------- */
     const newBooking = new Booking({
       firstName,
       lastName,
@@ -72,23 +96,23 @@ router.post("/booking/create", upload.single("receiptImage"), async (req, res) =
       ticketType,
       eventId,
       ticketNumber,
-      receiptImage: `/uploads/receipts/${req.file.filename}`,
+      receiptImage: uploadResult.secure_url,
     });
 
     await newBooking.save();
 
     res.status(201).json({
       message: "Booking created successfully",
-      newBooking,
+      booking: newBooking,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Booking Create Error:", error);
     res.status(500).json({ message: "Booking failed", error });
   }
 });
 
 /* ----------------------------------------------------
-    GET ALL BOOKINGS
+   GET ALL BOOKINGS
 ---------------------------------------------------- */
 router.get("/booking", async (req, res) => {
   try {
@@ -104,7 +128,7 @@ router.get("/booking", async (req, res) => {
 });
 
 /* ----------------------------------------------------
-    GET SINGLE BOOKING
+   GET SINGLE BOOKING
 ---------------------------------------------------- */
 router.get("/booking/:id", async (req, res) => {
   try {
@@ -121,11 +145,11 @@ router.get("/booking/:id", async (req, res) => {
 });
 
 /* ----------------------------------------------------
-    DELETE BOOKING
+   DELETE BOOKING
 ---------------------------------------------------- */
 router.delete("/booking/:id", async (req, res) => {
   try {
-    const booking = await Booking.findByBy(req.params.id);
+    const booking = await Booking.findById(req.params.id);
     if (!booking)
       return res.status(404).json({ message: "Booking not found" });
 
@@ -138,14 +162,14 @@ router.delete("/booking/:id", async (req, res) => {
 });
 
 /* ----------------------------------------------------
-    UPDATE BOOKING STATUS
+   UPDATE BOOKING STATUS
 ---------------------------------------------------- */
 router.put("/booking/update-status/:id", async (req, res) => {
   try {
     const { status } = req.body;
 
-    const allowed = ["Pending", "Paid", "Unpaid", "Cancelled"];
-    if (!allowed.includes(status)) {
+    const validStatuses = ["Pending", "Paid", "Unpaid", "Cancelled"];
+    if (!validStatuses.includes(status)) {
       return res.status(400).json({ message: "Invalid status value" });
     }
 
@@ -170,7 +194,7 @@ router.put("/booking/update-status/:id", async (req, res) => {
 });
 
 /* ----------------------------------------------------
-    VERIFY BY QR (ticketNumber)
+   VERIFY TICKET BY QR
 ---------------------------------------------------- */
 router.get("/booking/verify/:ticketNumber", async (req, res) => {
   try {
@@ -197,7 +221,7 @@ router.get("/booking/verify/:ticketNumber", async (req, res) => {
 });
 
 /* ----------------------------------------------------
-    SEND EMAIL WITH TICKET + QR CODE
+   SEND EMAIL WITH TICKET + QR CODE
 ---------------------------------------------------- */
 router.post("/booking/send-email/:id", async (req, res) => {
   try {
@@ -212,26 +236,12 @@ router.post("/booking/send-email/:id", async (req, res) => {
       return res.status(404).json({ message: "Booking not found" });
     }
 
-    /* ----------------------------------------------------
-        GENERATE QR CODE
-    ---------------------------------------------------- */
-    const verificationURL = `http://your-domain.com/verify-ticket/${booking.ticketNumber}`;
+    const verificationURL = `https://your-domain.com/verify-ticket/${booking.ticketNumber}`;
 
-    const qrCodeDataURL = await QRCode.toDataURL(verificationURL, {
-      errorCorrectionLevel: "H",
-      type: "image/png",
-      margin: 1,
-      width: 300,
-    });
+    const qrCodeDataURL = await QRCode.toDataURL(verificationURL);
 
-    /* ----------------------------------------------------
-        Replace {{QR_CODE}} placeholder in HTML
-    ---------------------------------------------------- */
     const finalHTML = htmlContent.replace("{{QR_CODE}}", qrCodeDataURL);
 
-    /* ----------------------------------------------------
-        SEND EMAIL
-    ---------------------------------------------------- */
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -251,7 +261,6 @@ router.post("/booking/send-email/:id", async (req, res) => {
     res.json({
       message: "Email sent successfully",
       qrCode: qrCodeDataURL,
-      verifyLink: verificationURL,
     });
   } catch (error) {
     console.error("Email Error:", error);
