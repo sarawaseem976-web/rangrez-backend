@@ -167,7 +167,7 @@ router.get("/booking/verify/:ticketNumber", async (req, res) => {
 });
 
 /* ----------------------------------------------------
-   SEND EMAIL WITH TICKET + QR CODE
+   SEND EMAIL WITH TICKET + INLINE QR CODE (CID)
 ---------------------------------------------------- */
 router.post("/booking/send-email/:id", async (req, res) => {
   try {
@@ -176,19 +176,15 @@ router.post("/booking/send-email/:id", async (req, res) => {
 
     const { subject } = req.body;
 
-    /* ----------------------------------------------------
-       QR CODE (GMAIL SAFE)
-    ---------------------------------------------------- */
+    // Generate QR code as a Buffer (NOT Base64)
     const verificationURL = `${process.env.CLIENT_URI}/verify-ticket/${booking.ticketNumber}`;
-
-    const qrCodeDataURL = await QRCode.toDataURL(verificationURL, {
-      margin: 1,
-      scale: 5,
-      errorCorrectionLevel: "L",
+    const qrBuffer = await QRCode.toBuffer(verificationURL, {
+      margin: 2,
+      scale: 6,
     });
 
     /* ----------------------------------------------------
-       EMAIL TEMPLATE
+       EMAIL TEMPLATE USING CID INLINE IMAGE
     ---------------------------------------------------- */
     const emailHTML = `
 <!DOCTYPE html>
@@ -200,33 +196,33 @@ router.post("/booking/send-email/:id", async (req, res) => {
 
 <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff; border-radius:6px; overflow:hidden;">
 
-  <!-- HEADER -->
   <tr>
     <td style="background:#222831; text-align:center; padding:24px;">
-      <h2 style="color:#fff; margin:0; font-size:22px;">${booking.eventId?.title || "Event Ticket"}</h2>
+      <h2 style="color:#fff; margin:0; font-size:22px;">${booking.eventId?.title}</h2>
       <p style="color:#ccc; margin:6px 0 0;">Your Entry Pass</p>
     </td>
   </tr>
 
-  <!-- BODY -->
   <tr>
     <td style="padding:20px;">
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e0e0e0; border-radius:6px;">
         <tr valign="top">
 
-          <td style="padding:16px; width:65%; font-size:14px; line-height:20px;">
+          <td style="padding:16px; width:65%; font-size:14px;">
             <p><strong>Ticket No:</strong> ${booking.ticketNumber}</p>
             <p><strong>Name:</strong> ${booking.firstName} ${booking.lastName}</p>
             <p><strong>Category:</strong> ${booking.ticketType}</p>
             <p><strong>City:</strong> ${booking.cityName}</p>
-            <p><strong>Date:</strong> ${booking.eventId?.date || "—"}</p>
-            <p><strong>Time:</strong> ${booking.eventId?.eventTime || "—"}</p>
-            <p><strong>Location:</strong> ${booking.eventId?.address || booking.eventId?.location || "—"}</p>
+            <p><strong>Date:</strong> ${booking.eventId?.date}</p>
+            <p><strong>Time:</strong> ${booking.eventId?.eventTime}</p>
+            <p><strong>Location:</strong> ${booking.eventId?.address}</p>
           </td>
 
           <td style="padding:16px; text-align:center; width:35%;">
             <p style="font-size:11px; margin-bottom:6px; color:#666;">Scan QR to verify</p>
-            <img src="${qrCodeDataURL}" width="140" height="140" alt="QR Code" style="display:block;">
+
+            <!-- INLINE ATTACHMENT QR -->
+            <img src="cid:qrCodeImg" width="140" height="140" alt="QR Code" style="display:block;">
           </td>
 
         </tr>
@@ -239,7 +235,6 @@ router.post("/booking/send-email/:id", async (req, res) => {
     </td>
   </tr>
 
-  <!-- FOOTER -->
   <tr>
     <td style="background:#f7f7f7; text-align:center; padding:12px; color:#777; font-size:12px;">
       Thank you for your purchase!
@@ -256,7 +251,7 @@ router.post("/booking/send-email/:id", async (req, res) => {
 `;
 
     /* ----------------------------------------------------
-       SEND EMAIL
+       SEND EMAIL (WITH QR AS INLINE ATTACHMENT)
     ---------------------------------------------------- */
     const transporter = nodemailer.createTransport({
       service: "gmail",
@@ -268,9 +263,16 @@ router.post("/booking/send-email/:id", async (req, res) => {
       to: booking.emailAddress,
       subject: subject || "Your Ticket",
       html: emailHTML,
+      attachments: [
+        {
+          filename: "qrcode.png",
+          content: qrBuffer,
+          cid: "qrCodeImg", // MUST match img src="cid:qrCodeImg"
+        },
+      ],
     });
 
-    res.json({ message: "Email sent successfully", qrCode: qrCodeDataURL });
+    res.json({ message: "Email sent successfully" });
 
   } catch (error) {
     console.error("Email Error:", error);
