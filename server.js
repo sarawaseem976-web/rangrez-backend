@@ -19,10 +19,10 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
-  origin: process.env.CLIENT_URI, // frontend URI
+  origin: 'https://rangrez-events-front-end.vercel.app', // Specify the front-end URL directly if needed
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization"], // Add your required headers here
+  allowedHeaders: ["Content-Type", "Authorization"], // Add headers as necessary
 }));
 
 app.use(express.json());
